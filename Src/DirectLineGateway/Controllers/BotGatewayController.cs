@@ -40,12 +40,14 @@ namespace Gabog.RequestResponseBotClient.DirectLineGateway.Controllers
             ti0 = DateTime.Now;
             var response = await _directLineClient.Conversations.PostActivityAsync(conversation.ConversationId, activity, cancellationToken);
             elapsed = DateTime.Now.Subtract(ti0).TotalMilliseconds;
+            // TODO: Init shouldn't return a response, this seems to be a bug.
+            var r = await GetResponses(conversation.ConversationId, null, _directLineClient, cancellationToken);
 
             var initResponse = new BotGatewayResponse
             {
                 Activities = new List<Activity> { GetFakeActivity() },
                 ConversationId = conversation.ConversationId,
-                Watermark = null
+                Watermark = r.Watermark
             };
             return new ActionResult<BotGatewayResponse>(Ok(initResponse));
         }
@@ -72,12 +74,15 @@ namespace Gabog.RequestResponseBotClient.DirectLineGateway.Controllers
             // Reconnect and post (run them in parallel).
             var stopwatch = Stopwatch.StartNew();
             var reconnectTask = _directLineClient.Conversations.ReconnectToConversationAsync(conversationId, watermark, cancellationToken);
+
+            // TODO: how do we check error handling if we don't await...
             var postTask = _directLineClient.Conversations.PostActivityAsync(conversationId, activity, cancellationToken);
-            Task.WaitAll(reconnectTask, postTask);
+
+            Task.WaitAll(reconnectTask);
             var reconnectAndPostTime = stopwatch.ElapsedMilliseconds;
 
             stopwatch.Restart();
-            var responses = await GetResponses(conversationId, cancellationToken, _directLineClient, watermark);
+            var responses = await GetResponses(conversationId, watermark, _directLineClient, cancellationToken);
             var getTime = stopwatch.ElapsedMilliseconds;
 
             responses.Diagnostics = new DiagnosticsData
@@ -91,42 +96,58 @@ namespace Gabog.RequestResponseBotClient.DirectLineGateway.Controllers
 
         [HttpGet]
         [Route("getNextMessage")]
-        public ActionResult<BotGatewayResponse> GetNextMessageAsync(string conversationId, string watermark, CancellationToken cancellationToken = default(CancellationToken))
+        public async Task<ActionResult<BotGatewayResponse>> GetNextMessageAsync(string conversationId, string watermark, CancellationToken cancellationToken = default(CancellationToken))
         {
-            return new ActionResult<BotGatewayResponse>(Ok(GetResponses(conversationId, cancellationToken, _directLineClient, watermark)));
+            var stopwatch = Stopwatch.StartNew();
+            await _directLineClient.Conversations.ReconnectToConversationAsync(conversationId, watermark, cancellationToken);
+            var reconnectAndPostTime = stopwatch.ElapsedMilliseconds;
+
+            stopwatch.Restart();
+            var response = await GetResponses(conversationId, watermark, _directLineClient, cancellationToken);
+            var getTime = stopwatch.ElapsedMilliseconds;
+
+            response.Diagnostics = new DiagnosticsData
+            {
+                PostAndReconnectTime = reconnectAndPostTime,
+                GetResponseTime = getTime
+            };
+
+            return new ActionResult<BotGatewayResponse>(Ok(response));
         }
 
-        private async Task<BotGatewayResponse> GetResponses(string conversationId, CancellationToken cancellationToken, DirectLineClient directLineClient, string watermark = null)
+        private async Task<BotGatewayResponse> GetResponses(string conversationId, string watermark, DirectLineClient directLineClient, CancellationToken cancellationToken)
         {
             // wait and send back as soon as we get at least one answer
             try
             {
-                IEnumerable<Activity> activities;
+                List<Activity> activities;
                 while (true)
                 {
-                    var activitySet = await directLineClient.Conversations.GetActivitiesAsync(conversationId, watermark, cancellationToken).ConfigureAwait(false);
+                    var activitySet = await directLineClient.Conversations.GetActivitiesAsync(conversationId, watermark, cancellationToken);
                     if (activitySet != null)
                     {
                         watermark = activitySet.Watermark;
 
                         if (activitySet.Activities.Count > 0)
                         {
-                            activities = from x in activitySet.Activities
-                                where x.From.Id == _botId
-                                select x;
+                            var receivedActivities = activitySet.Activities.Where(a => a.From.Id == _botId).ToList();
 
-                            break;
+                            if (receivedActivities.Any())
+                            {
+                                activities = receivedActivities;
+                                break;
+                            }
                         }
                     }
 
-                    await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
                 }
 
                 var responses = new BotGatewayResponse
                 {
-                    Activities = new List<Activity>(activities),
+                    Activities = activities,
                     ConversationId = conversationId,
-                    Watermark = watermark == null ? "1" : (int.Parse(watermark) + 1).ToString()
+                    Watermark = watermark
                 };
 
                 return responses;

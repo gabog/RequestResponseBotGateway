@@ -166,7 +166,9 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
                     Console.WriteLine("Polling for next message...");
                     var stopWatch = Stopwatch.StartNew();
                     nextResponse = await dlGatewayProxy.GetNextMessageAsync(conversationId, lastResponse.Watermark, cancellationToken);
-                    Console.WriteLine(stopWatch.ElapsedMilliseconds);
+                    var elapsedMilliseconds = stopWatch.ElapsedMilliseconds;
+                    Console.WriteLine("Done.");
+                    RenderResponse(nextResponse, elapsedMilliseconds);
                 } while (nextResponse == null);
 
                 lastResponse = nextResponse;
@@ -187,11 +189,19 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
 
             var stopWatch = Stopwatch.StartNew();
             var lastResponse = await dlGatewayProxy.SendActivityAsync(conversationId, watermark, activity, cancellationToken);
-            Console.WriteLine($"Done. Activities received: {lastResponse.Activities.Count}");
-            Console.WriteLine($"Client roundtrip duration (ms): {stopWatch.ElapsedMilliseconds:N0}");
-            Console.WriteLine($"Server: Reconnect and post duration (ms): {lastResponse.Diagnostics.PostAndReconnectTime:N0}");
-            Console.WriteLine($"Server: Get response duration (ms): {lastResponse.Diagnostics.GetResponseTime:N0}");
+            var clientRoundtripTime = stopWatch.ElapsedMilliseconds;
+            Console.WriteLine("Done.");
+            RenderResponse(lastResponse, clientRoundtripTime);
             return lastResponse;
+        }
+
+        private static void RenderResponse(BotGatewayResponse lastResponse, long clientRoundtripTime)
+        {
+            Console.WriteLine($"\tClient roundtrip duration (ms): {clientRoundtripTime:N0}");
+            Console.WriteLine($"\tActivities received: {lastResponse.Activities.Count}");
+            Console.WriteLine($"\tWatermark: {lastResponse.Watermark}");
+            Console.WriteLine($"\tServer: Reconnect and post duration (ms): {lastResponse.Diagnostics.PostAndReconnectTime:N0}");
+            Console.WriteLine($"\tServer: Get response duration (ms): {lastResponse.Diagnostics.GetResponseTime:N0}");
         }
 
         private static void RenderResponses(IList<Activity> activities)
