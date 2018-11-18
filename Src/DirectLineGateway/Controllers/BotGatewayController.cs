@@ -56,6 +56,41 @@ namespace Gabog.RequestResponseBotClient.DirectLineGateway.Controllers
         [Route("sendActivity")]
         public async Task<ActionResult<BotGatewayResponse>> SendActivityAsync(string conversationId, string watermark, [FromBody] Activity activity, CancellationToken cancellationToken = default(CancellationToken))
         {
+            // Reconnect and post (run them in parallel).
+            var stopwatch = Stopwatch.StartNew();
+            var reconnectTask = _directLineClient.Conversations.ReconnectToConversationAsync(conversationId, watermark, cancellationToken);
+
+            // TODO: how do we check error handling if we don't await...
+            var postTask = _directLineClient.Conversations.PostActivityAsync(conversationId, activity, cancellationToken);
+
+            Task.WaitAll(reconnectTask);
+            var reconnectTime = stopwatch.ElapsedMilliseconds;
+
+            var responses = await GetResponses(conversationId, watermark, _directLineClient, cancellationToken);
+
+            responses.Diagnostics.ReconnectAndPostDuration = reconnectTime;
+
+            return new ActionResult<BotGatewayResponse>(Ok(responses));
+        }
+
+        [HttpGet]
+        [Route("getNextMessage")]
+        public async Task<ActionResult<BotGatewayResponse>> GetNextMessageAsync(string conversationId, string watermark, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            var stopwatch = Stopwatch.StartNew();
+            await _directLineClient.Conversations.ReconnectToConversationAsync(conversationId, watermark, cancellationToken);
+            var reconnectTime = stopwatch.ElapsedMilliseconds;
+
+            var response = await GetResponses(conversationId, watermark, _directLineClient, cancellationToken);
+
+            response.Diagnostics.ReconnectAndPostDuration = reconnectTime;
+
+            return new ActionResult<BotGatewayResponse>(Ok(response));
+        }
+
+        private async Task<BotGatewayResponse> GetResponses(string conversationId, string watermark, DirectLineClient directLineClient, CancellationToken cancellationToken)
+        {
+            // TODO, replace polling by sockets
             //using (var webSocketClient = new WebSocket(_directLineClient.Conversations.StreamUrl))
             //{
             //    webSocketClient.OnMessage += WebSocketClient_OnMessage;
@@ -71,58 +106,15 @@ namespace Gabog.RequestResponseBotClient.DirectLineGateway.Controllers
 
             //}
 
-            // Reconnect and post (run them in parallel).
-            var stopwatch = Stopwatch.StartNew();
-            var reconnectTask = _directLineClient.Conversations.ReconnectToConversationAsync(conversationId, watermark, cancellationToken);
-
-            // TODO: how do we check error handling if we don't await...
-            var postTask = _directLineClient.Conversations.PostActivityAsync(conversationId, activity, cancellationToken);
-
-            Task.WaitAll(reconnectTask);
-            var reconnectAndPostTime = stopwatch.ElapsedMilliseconds;
-
-            stopwatch.Restart();
-            var responses = await GetResponses(conversationId, watermark, _directLineClient, cancellationToken);
-            var getTime = stopwatch.ElapsedMilliseconds;
-
-            responses.Diagnostics = new DiagnosticsData
-            {
-                PostAndReconnectTime = reconnectAndPostTime,
-                GetResponseTime = getTime
-            };
-
-            return new ActionResult<BotGatewayResponse>(Ok(responses));
-        }
-
-        [HttpGet]
-        [Route("getNextMessage")]
-        public async Task<ActionResult<BotGatewayResponse>> GetNextMessageAsync(string conversationId, string watermark, CancellationToken cancellationToken = default(CancellationToken))
-        {
-            var stopwatch = Stopwatch.StartNew();
-            await _directLineClient.Conversations.ReconnectToConversationAsync(conversationId, watermark, cancellationToken);
-            var reconnectAndPostTime = stopwatch.ElapsedMilliseconds;
-
-            stopwatch.Restart();
-            var response = await GetResponses(conversationId, watermark, _directLineClient, cancellationToken);
-            var getTime = stopwatch.ElapsedMilliseconds;
-
-            response.Diagnostics = new DiagnosticsData
-            {
-                PostAndReconnectTime = reconnectAndPostTime,
-                GetResponseTime = getTime
-            };
-
-            return new ActionResult<BotGatewayResponse>(Ok(response));
-        }
-
-        private async Task<BotGatewayResponse> GetResponses(string conversationId, string watermark, DirectLineClient directLineClient, CancellationToken cancellationToken)
-        {
             // wait and send back as soon as we get at least one answer
             try
             {
+                var tryCount = 0;
                 List<Activity> activities;
+                var stopwatch = Stopwatch.StartNew();
                 while (true)
                 {
+                    tryCount++;
                     var activitySet = await directLineClient.Conversations.GetActivitiesAsync(conversationId, watermark, cancellationToken);
                     if (activitySet != null)
                     {
@@ -143,11 +135,18 @@ namespace Gabog.RequestResponseBotClient.DirectLineGateway.Controllers
                     await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
                 }
 
+                stopwatch.Stop();
+
                 var responses = new BotGatewayResponse
                 {
                     Activities = activities,
                     ConversationId = conversationId,
-                    Watermark = watermark
+                    Watermark = watermark,
+                    Diagnostics = new DiagnosticsData
+                    {
+                        GetResponseDuration = stopwatch.ElapsedMilliseconds,
+                        GetResponseTries = tryCount
+                    }
                 };
 
                 return responses;

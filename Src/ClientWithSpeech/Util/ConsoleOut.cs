@@ -19,10 +19,44 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech.Util
             Console.ResetColor();
         }
 
+        public static void WriteTiming(string message, long duration)
+        {
+            Console.Write(message);
+            Console.Write(" ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("{0:N0}", duration);
+            Console.ResetColor();
+        }
+
         public static void WriteFlowerLine()
         {
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("\r\n=> {0:MM/dd/yyyy hh:mm:ss.fff tt} {1}", DateTime.Now, new string('*', 80));
+            Console.ResetColor();
+        }
+
+        public static void WriteFinalSpeechResult(string text)
+        {
+            WriteSpeechResult(text, ConsoleColor.DarkCyan, ConsoleColor.Black);
+            Console.WriteLine();
+        }
+
+        public static void WriteInProgressSpeechResult(string text)
+        {
+            WriteSpeechResult(text, ConsoleColor.DarkRed, ConsoleColor.Black);
+        }
+
+        private static void WriteSpeechResult(string text, ConsoleColor backgroundColor, ConsoleColor foregroundColor)
+        {
+            // Clear previous text
+            Console.CursorLeft = 0;
+            Console.Write(new string(' ', Console.BufferWidth - 1));
+
+            // Output text
+            Console.BackgroundColor = backgroundColor;
+            Console.ForegroundColor = foregroundColor;
+            Console.CursorLeft = 0;
+            Console.Write(text);
             Console.ResetColor();
         }
     }

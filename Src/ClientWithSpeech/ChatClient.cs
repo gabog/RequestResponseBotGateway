@@ -16,7 +16,7 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
     {
         private readonly string _fromId;
         private readonly string _gatewayUrl;
-        private readonly string _locale = "en-US";
+        private readonly string _locale;
         private readonly bool _renderIncomingActivities;
         private readonly bool _renderOutgoingActivities;
 
@@ -25,6 +25,7 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
             Configuration = configuration;
             _gatewayUrl = configuration.GetSection("GatewayUrl").Value;
             _fromId = configuration.GetSection("FromId").Value;
+            _locale = configuration.GetSection("Locale").Value;
             _renderOutgoingActivities = bool.Parse(configuration.GetSection("RenderOutgoingActivities").Value);
             _renderIncomingActivities = bool.Parse(configuration.GetSection("RenderIncomingActivities").Value);
         }
@@ -33,6 +34,7 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
 
         public async Task StartChat(CancellationToken cancellationToken = default(CancellationToken))
         {
+            RenderSettings();
             using (var dlGatewayProxy = new DirectLineGatewayProxy(new Uri(_gatewayUrl)))
             {
                 var initActivity = GetInitActivity(new ChannelAccount(_fromId), _locale, GetChannelData(Configuration));
@@ -40,10 +42,11 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
                 var stopWatch = Stopwatch.StartNew();
                 Console.WriteLine("Initializing...");
                 var lastResponse = await dlGatewayProxy.InitAssistantAsync(initActivity, cancellationToken);
-                Console.WriteLine(stopWatch.ElapsedMilliseconds);
+                ConsoleOut.WriteTiming("Total time:", stopWatch.ElapsedMilliseconds);
 
                 while (true)
                 {
+                    ConsoleOut.WriteFlowerLine();
                     var utterance = await GetUtterance();
 
                     if (string.IsNullOrEmpty(utterance))
@@ -56,11 +59,11 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
                         break;
                     }
 
-                    ConsoleOut.WriteFlowerLine();
                     Console.WriteLine($"Utterance: \"{utterance}\"");
                     stopWatch.Restart();
                     lastResponse = await HandleUtterance(lastResponse.ConversationId, utterance, lastResponse.Watermark, dlGatewayProxy, cancellationToken);
-                    Console.WriteLine($"Total time: {stopWatch.ElapsedMilliseconds}");
+                    ConsoleOut.WriteTiming("Total time:", stopWatch.ElapsedMilliseconds);
+                    Console.WriteLine();
                 }
             }
         }
@@ -84,17 +87,14 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
             while (lastActivity.InputHint != InputHints.AcceptingInput && lastActivity.InputHint != InputHints.ExpectingInput)
             {
                 RenderResponses(lastResponse.Activities);
-                BotGatewayResponse nextResponse;
-                do
-                {
-                    // Get next message until we get a new message
-                    Console.WriteLine("Getting next message...");
-                    var stopWatch = Stopwatch.StartNew();
-                    nextResponse = await dlGatewayProxy.GetNextMessageAsync(conversationId, lastResponse.Watermark, cancellationToken);
-                    var elapsedMilliseconds = stopWatch.ElapsedMilliseconds;
-                    Console.WriteLine("Done.");
-                    RenderResponse(nextResponse, elapsedMilliseconds);
-                } while (nextResponse == null);
+
+                // Get next message until we get a new message
+                Console.WriteLine("Getting next message...");
+                var stopWatch = Stopwatch.StartNew();
+                var nextResponse = await dlGatewayProxy.GetNextMessageAsync(conversationId, lastResponse.Watermark, cancellationToken);
+                var elapsedMilliseconds = stopWatch.ElapsedMilliseconds;
+                Console.WriteLine("Done.");
+                RenderResponse(nextResponse, elapsedMilliseconds);
 
                 lastResponse = nextResponse;
                 lastActivity = lastResponse.Activities[lastResponse.Activities.Count - 1];
@@ -179,11 +179,23 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
 
         private static void RenderResponse(BotGatewayResponse lastResponse, long clientRoundtripTime)
         {
-            Console.WriteLine($"\tClient roundtrip duration (ms): {clientRoundtripTime:N0}");
+            ConsoleOut.WriteTiming("\tClient roundtrip duration (ms):", clientRoundtripTime);
             Console.WriteLine($"\tActivities received: {lastResponse.Activities.Count}");
             Console.WriteLine($"\tWatermark: {lastResponse.Watermark}");
-            Console.WriteLine($"\tServer: Reconnect and post duration (ms): {lastResponse.Diagnostics.PostAndReconnectTime:N0}");
-            Console.WriteLine($"\tServer: Get response duration (ms): {lastResponse.Diagnostics.GetResponseTime:N0}");
+            ConsoleOut.WriteTiming("\tServer: Reconnect (and post) duration (ms):", lastResponse.Diagnostics.ReconnectAndPostDuration);
+            ConsoleOut.WriteTiming("\tServer: Get response duration (ms):", lastResponse.Diagnostics.GetResponseDuration);
+            Console.WriteLine($"\tServer: Get response retries: {lastResponse.Diagnostics.GetResponseTries:N0}");
+        }
+
+        private void RenderSettings()
+        {
+            Console.WriteLine("Configuration settings");
+            Console.WriteLine($"\tGatewayUrl: {_gatewayUrl}");
+            Console.WriteLine($"\tFromId: {_fromId}");
+            Console.WriteLine($"\tLocale: {_locale}");
+            Console.WriteLine($"\tRender incoming activities: {_renderIncomingActivities}");
+            Console.WriteLine($"\tRender outgoing activities: {_renderOutgoingActivities}");
+            Console.WriteLine();
         }
     }
 }

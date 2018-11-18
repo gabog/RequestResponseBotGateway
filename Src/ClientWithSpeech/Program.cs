@@ -19,7 +19,8 @@ namespace Gabog.RequestResponseBotClient.ClientWithSpeech
         {
             try
             {
-                var chatClient = new ChatClient(Configuration);
+                //var chatClient = new ChatClient(Configuration);
+                var chatClient = new SpeechChatClient(Configuration);
                 chatClient.StartChat().Wait();
             }
             catch (Exception ex)

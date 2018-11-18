@@ -1,80 +1,95 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
+using Gabog.RequestResponseBotClient.ClientWithSpeech.Util;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 
 namespace Gabog.RequestResponseBotClient.ClientWithSpeech
 {
-    public class SpeechChatClient :ChatClient
+    public class SpeechChatClient : ChatClient
     {
-        private readonly string _speechEndpointId;
-        private readonly string _speechRegion;
-        private readonly string _speechSubscriptionKey;
+        private readonly SpeechConfig _speechConfig;
 
         public SpeechChatClient(IConfiguration configuration) : base(configuration)
         {
             // Speech
-            _speechSubscriptionKey = configuration.GetSection("Speech:SubscriptionKey").Value;
-            _speechRegion = configuration.GetSection("Speech:Region").Value;
-            _speechEndpointId = configuration.GetSection("Speech:EndpointId").Value;
+            var speechSubscriptionKey = configuration.GetSection("Speech:SubscriptionKey").Value;
+            var speechRegion = configuration.GetSection("Speech:Region").Value;
+            var speechEndpointId = configuration.GetSection("Speech:EndpointId").Value;
+            _speechConfig = SpeechConfig.FromSubscription(speechSubscriptionKey, speechRegion);
+            _speechConfig.SpeechRecognitionLanguage = configuration.GetSection("Speech:Locale").Value;
+            if (!string.IsNullOrEmpty(speechEndpointId))
+            {
+                // Custom speech will use a custom endpoint ID
+                _speechConfig.EndpointId = speechEndpointId;
+            }
         }
 
         protected override async Task<string> GetUtterance()
         {
-            //return base.GetUtterance();
-
-            // Creates an instance of a speech config with specified subscription key and service region.
-            // Replace with your own subscription key // and service region (e.g., "westus").
-            var config = SpeechConfig.FromSubscription(_speechSubscriptionKey, _speechRegion);
-            if (!string.IsNullOrEmpty(_speechEndpointId))
+            const string saySomethingOrSayQuitToEnd = "Say something... (or say quit to end)";
+            using (var recognizer = new SpeechRecognizer(_speechConfig))
             {
-                // Custom speech will use a custom endpoint ID
-                config.EndpointId = _speechEndpointId;
-            }
+                recognizer.Recognizing += Recognizer_Recognizing;
+                recognizer.Recognized += Recognizer_Recognized;
 
-            // Creates a speech recognizer.
-            using (var recognizer = new SpeechRecognizer(config))
-            {
-                var quit = false;
-                while (!quit)
+                while (true)
                 {
-                    Console.WriteLine("Say something... (or say quit to end)");
+                    Console.CursorLeft = 0;
+                    Console.Write(saySomethingOrSayQuitToEnd);
 
                     // Performs recognition. RecognizeOnceAsync() returns when the first utterance has been recognized,
                     // so it is suitable only for single shot recognition like command or query. For long-running
                     // recognition, use StartContinuousRecognitionAsync() instead.
                     var result = await recognizer.RecognizeOnceAsync();
 
-                    // Checks result.
-                    if (result.Reason == ResultReason.RecognizedSpeech)
+                    switch (result.Reason)
                     {
-                        Console.WriteLine($"We recognized: {result.Text}");
-                        if (result.Text.ToLower().Trim().StartsWith("quit"))
+                        // Checks result.
+                        case ResultReason.RecognizedSpeech:
+                            var resultText = StripEndingCharacters(result);
+                            ConsoleOut.WriteFinalSpeechResult(resultText);
+                            return resultText.Trim();
+                        case ResultReason.NoMatch:
+                            break;
+                        case ResultReason.Canceled:
                         {
-                            quit = true;
-                        }
-                    }
-                    else if (result.Reason == ResultReason.NoMatch)
-                    {
-                        Console.WriteLine("NOMATCH: Speech could not be recognized.");
-                    }
-                    else if (result.Reason == ResultReason.Canceled)
-                    {
-                        var cancellation = CancellationDetails.FromResult(result);
-                        Console.WriteLine($"CANCELED: Reason={cancellation.Reason}");
+                            var cancellation = CancellationDetails.FromResult(result);
+                            Console.WriteLine($"CANCELED: Reason={cancellation.Reason}");
 
-                        if (cancellation.Reason == CancellationReason.Error)
-                        {
-                            Console.WriteLine($"CANCELED: ErrorDetails={cancellation.ErrorDetails}");
-                            Console.WriteLine("CANCELED: Did you update the subscription info?");
+                            if (cancellation.Reason == CancellationReason.Error)
+                            {
+                                Console.WriteLine($"CANCELED: ErrorDetails={cancellation.ErrorDetails}");
+                                Console.WriteLine("CANCELED: Did you update the subscription info?");
+                            }
+
+                            break;
                         }
                     }
                 }
             }
+        }
 
-            return "test";
+        private static string StripEndingCharacters(SpeechRecognitionResult result)
+        {
+            var resultText = result.Text;
+            if (resultText.EndsWith('.') || resultText.EndsWith(','))
+            {
+                resultText = resultText.Remove(resultText.Length - 1);
+            }
+
+            return resultText;
+        }
+
+        private void Recognizer_Recognizing(object sender, SpeechRecognitionEventArgs e)
+        {
+            ConsoleOut.WriteInProgressSpeechResult(e.Result.Text);
+        }
+
+        private void Recognizer_Recognized(object sender, SpeechRecognitionEventArgs e)
+        {
+            ConsoleOut.WriteInProgressSpeechResult(e.Result.Text);
         }
     }
 }
