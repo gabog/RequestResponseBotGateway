@@ -19,7 +19,7 @@
     <PackageReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.Razor.Design" Version="2.2.0-preview3-35497" PrivateAssets="All" />
     <PackageReference Include="Microsoft.Bot.Connector.DirectLine" Version="3.0.2" />
-    <PackageReference Include="Microsoft.Rest.ClientRuntime" Version="2.3.18" />
+    <PackageReference Include="Microsoft.Rest.ClientRuntime" Version="2.3.24" />
     <PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="2.2.0-preview3-35497" />
   </ItemGroup>
 
